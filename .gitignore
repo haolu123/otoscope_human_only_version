@@ -1,0 +1,12 @@
+videos/
+otoscope_exam/videos/
+result/
+otoscope_exam/result/
+build/
+dist/
+dist_macos/
+__pycache__/
+*.pyc
+*.spec
+*.zip
+

@@ -1,0 +1,43 @@
+name: Build macOS Otoscope Exam
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "otoscope_exam/**"
+      - ".github/workflows/build-macos.yml"
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: otoscope_exam/environment-macos.yml
+          activate-environment: otoscope_exam_mac
+          auto-activate-base: false
+
+      - name: Build macOS package
+        shell: bash -l {0}
+        run: |
+          conda activate otoscope_exam_mac
+          chmod +x otoscope_exam/build_macos.sh
+          ./otoscope_exam/build_macos.sh
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: otoscope_exam_mac
+          path: otoscope_exam/dist_macos/otoscope_exam_mac.zip
+          if-no-files-found: error
+          retention-days: 14
+

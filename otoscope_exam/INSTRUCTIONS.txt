@@ -1,0 +1,39 @@
+Otoscope Exam Instructions
+
+1. Open otoscope_exam.exe.
+
+2. Enter your name in the Name field, then click Start Exam.
+
+3. If you have taken this exam before with the same name, you may be asked to choose:
+   - Continue Selected Test: continue a previous test
+   - Start New Test: begin a new test
+   - Cancel: return without starting
+
+4. For each question, watch the otoscope video and choose one diagnosis from the options below the video:
+   - AOM
+   - Effusion
+   - Normal
+   - Perforation
+   - Retraction
+   - Tubes
+   - Tympanosclerosis
+
+5. Video controls:
+   - Play: start or continue the video
+   - Pause: pause the video
+   - Replay: restart the video
+   - 0.5x, 1x, 1.5x, 2x: change playback speed
+   - Download Video: save a copy of the current video to a location you choose
+
+6. After selecting an answer, click Confirm.
+
+7. You can use:
+   - Back: return to a previous question
+   - Next: move forward to a question you have already visited
+   - Go to New Question: jump back to the next unanswered question
+
+8. You may change an earlier answer by clicking Back, selecting a different answer, and clicking Confirm again.
+
+9. Your progress is saved automatically. If you close the program before finishing, you can reopen it, enter the same name, and continue a previous test.
+
+10. When all questions are completed, the program will save your results automatically.
