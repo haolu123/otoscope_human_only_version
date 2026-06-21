@@ -1,5 +1,7 @@
 name: Build macOS Otoscope Exam
 
+# Builds the human-only macOS app without uploading the video dataset.
+
 on:
   workflow_dispatch:
   push:
@@ -40,4 +42,3 @@ jobs:
           path: otoscope_exam/dist_macos/otoscope_exam_mac.zip
           if-no-files-found: error
           retention-days: 14
-
