@@ -20,6 +20,7 @@ mkdir -p "${RELEASE_ROOT}/result"
 cp -R "dist/${APP_NAME}.app" "${RELEASE_ROOT}/"
 cp "INSTRUCTIONS.txt" "${RELEASE_ROOT}/"
 cp "READ_ME_FIRST_MAC.txt" "${RELEASE_ROOT}/"
+cp "fixed_questions_100.json" "${RELEASE_ROOT}/"
 
 if [ -d "videos" ]; then
   cp -R "videos" "${RELEASE_ROOT}/videos"
@@ -41,4 +42,3 @@ fi
 
 ditto -c -k --keepParent "${RELEASE_ROOT}" "${DIST_ROOT}/otoscope_exam_mac.zip"
 echo "Build complete: ${DIST_ROOT}/otoscope_exam_mac.zip"
-

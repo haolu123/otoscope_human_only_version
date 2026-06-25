@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -45,6 +46,7 @@ CATEGORIES = [
 ]
 VIDEO_EXTENSIONS = {".mov", ".avi", ".mp4", ".mkv", ".wmv", ".m4v"}
 MAX_FRAME_READ_ATTEMPTS = 30
+FIXED_QUESTIONS_MANIFEST = "fixed_questions_100.json"
 
 # Keep this as the internal question-count interface. None means use every video.
 QUESTION_LIMIT = 100
@@ -83,6 +85,12 @@ def relative_to_root(path: Path, root: Path) -> str:
 
 
 def load_questions(root: Path) -> list[VideoQuestion]:
+    manifest_path = root / FIXED_QUESTIONS_MANIFEST
+    if manifest_path.exists():
+        questions = load_fixed_questions(root, manifest_path)
+        random.shuffle(questions)
+        return questions
+
     videos_dir = root / "videos"
     if not videos_dir.exists():
         raise FileNotFoundError(f"Videos folder not found: {videos_dir}")
@@ -158,6 +166,45 @@ def select_balanced_questions(
 
     random.shuffle(selected)
     return selected
+
+
+def load_fixed_questions(root: Path, manifest_path: Path) -> list[VideoQuestion]:
+    with manifest_path.open("r", encoding="utf-8") as file:
+        items = json.load(file)
+    if not isinstance(items, list) or len(items) != 100:
+        raise ValueError(
+            f"{FIXED_QUESTIONS_MANIFEST} must contain exactly 100 questions."
+        )
+
+    questions: list[VideoQuestion] = []
+    seen_paths: set[str] = set()
+    for index, item in enumerate(items, start=1):
+        try:
+            relative_path = item["relative_path"]
+            video_id = item["video_id"]
+            correct_answer = item["correct_answer"]
+        except KeyError as exc:
+            raise ValueError(
+                f"Question {index} in {FIXED_QUESTIONS_MANIFEST} is missing {exc}."
+            ) from exc
+        if correct_answer not in CATEGORIES:
+            raise ValueError(
+                f"Question {index} has unknown category: {correct_answer}."
+            )
+        if relative_path in seen_paths:
+            raise ValueError(f"Duplicate question path in manifest: {relative_path}")
+        seen_paths.add(relative_path)
+        path = root / relative_path
+        if not path.exists():
+            raise FileNotFoundError(f"Manifest video not found: {relative_path}")
+        questions.append(
+            VideoQuestion(
+                video_id=video_id,
+                correct_answer=correct_answer,
+                path=path,
+            )
+        )
+    return questions
 
 
 def find_subject_sessions(root: Path, subject_name: str) -> list[Path]:
@@ -290,7 +337,7 @@ class VideoPlayer(QWidget):
 
         self.video_label = QLabel("No video loaded")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(720, 420)
+        self.video_label.setMinimumSize(520, 260)
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.video_label.setObjectName("VideoSurface")
 
@@ -419,6 +466,7 @@ class ExamPage(QWidget):
         self.exam_date = ""
         self.questions: list[VideoQuestion] = []
         self.answers: list[str | None] = []
+        self.confidence_levels: list[int | None] = []
         self.current_index = 0
         self.furthest_index = 0
         self.completed = False
@@ -458,12 +506,35 @@ class ExamPage(QWidget):
         self.answer_group = QButtonGroup(self)
         self.answer_group.setExclusive(True)
         diagnosis_layout = QGridLayout(diagnosis_box)
+        diagnosis_layout.setContentsMargins(10, 10, 10, 8)
+        diagnosis_layout.setHorizontalSpacing(12)
+        diagnosis_layout.setVerticalSpacing(2)
         for index, category in enumerate(CATEGORIES):
             radio = QRadioButton(category)
             self.answer_group.addButton(radio, index)
-            row = index // 2
-            column = index % 2
+            row = index // 3
+            column = index % 3
             diagnosis_layout.addWidget(radio, row, column)
+
+        confidence_box = QGroupBox("Confidence Level")
+        confidence_layout = QVBoxLayout(confidence_box)
+        confidence_layout.setContentsMargins(10, 10, 10, 8)
+        confidence_layout.setSpacing(3)
+        confidence_prompt = QLabel("How confident are you in this answer?")
+        confidence_prompt.setObjectName("Subtitle")
+        confidence_help = QLabel("1 = Not confident at all    5 = Very confident")
+        confidence_help.setObjectName("Subtitle")
+        confidence_layout.addWidget(confidence_prompt)
+        confidence_layout.addWidget(confidence_help)
+        confidence_buttons_layout = QHBoxLayout()
+        self.confidence_group = QButtonGroup(self)
+        self.confidence_group.setExclusive(True)
+        for level in range(1, 6):
+            radio = QRadioButton(str(level))
+            self.confidence_group.addButton(radio, level)
+            confidence_buttons_layout.addWidget(radio)
+        confidence_buttons_layout.addStretch()
+        confidence_layout.addLayout(confidence_buttons_layout)
 
         self.back_button = QPushButton("Back")
         self.next_button = QPushButton("Next")
@@ -481,14 +552,25 @@ class ExamPage(QWidget):
         nav_layout.addStretch()
         nav_layout.addWidget(self.confirm_button)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        exam_content = QWidget()
+        layout = QVBoxLayout(exam_content)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
         layout.addWidget(self.header_label)
         layout.addWidget(self.video_player, stretch=1)
         layout.addLayout(control_layout)
         layout.addWidget(diagnosis_box)
+        layout.addWidget(confidence_box)
         layout.addLayout(nav_layout)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(exam_content)
+
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(8, 8, 8, 8)
+        page_layout.addWidget(scroll)
 
     def start_exam(self, subject_name: str):
         self.root = app_root()
@@ -498,6 +580,7 @@ class ExamPage(QWidget):
         self.exam_date = now.strftime("%Y-%m-%d %H:%M:%S")
         self.questions = load_questions(self.root)
         self.answers = [None] * len(self.questions)
+        self.confidence_levels = [None] * len(self.questions)
         self.current_index = 0
         self.furthest_index = 0
         self.completed = False
@@ -515,6 +598,9 @@ class ExamPage(QWidget):
         self.subject_id = data["subject_id"]
         self.exam_date = data["exam_date"]
         self.answers = data["answers"]
+        self.confidence_levels = data.get("confidence_levels", [None] * len(self.answers))
+        if len(self.confidence_levels) != len(self.answers):
+            self.confidence_levels = [None] * len(self.answers)
         self.current_index = min(data.get("current_index", 0), len(self.answers) - 1)
         self.furthest_index = min(
             data.get("furthest_index", self.current_index), len(self.answers) - 1
@@ -560,6 +646,7 @@ class ExamPage(QWidget):
             f"Question {self.current_index + 1} / {len(self.questions)}"
         )
         self.restore_answer_selection()
+        self.restore_confidence_selection()
         self.update_navigation_buttons()
 
     def restore_answer_selection(self):
@@ -576,11 +663,30 @@ class ExamPage(QWidget):
                 button.setChecked(True)
                 break
 
+    def restore_confidence_selection(self):
+        self.confidence_group.setExclusive(False)
+        for button in self.confidence_group.buttons():
+            button.setChecked(False)
+        self.confidence_group.setExclusive(True)
+
+        confidence = self.confidence_levels[self.current_index]
+        if confidence is None:
+            return
+        button = self.confidence_group.button(int(confidence))
+        if button is not None:
+            button.setChecked(True)
+
     def selected_answer(self) -> str | None:
         button = self.answer_group.checkedButton()
         if button is None:
             return None
         return button.text()
+
+    def selected_confidence(self) -> int | None:
+        checked_id = self.confidence_group.checkedId()
+        if checked_id < 1:
+            return None
+        return checked_id
 
     def update_navigation_buttons(self):
         self.back_button.setEnabled(self.current_index > 0)
@@ -623,8 +729,17 @@ class ExamPage(QWidget):
                 "Please select an answer before continuing.",
             )
             return
+        confidence = self.selected_confidence()
+        if confidence is None:
+            QMessageBox.warning(
+                self,
+                "Confidence Required",
+                "Please select your confidence level before continuing.",
+            )
+            return
 
         self.answers[self.current_index] = answer
+        self.confidence_levels[self.current_index] = confidence
         if all(item is not None for item in self.answers):
             self.finish_exam()
             return
@@ -695,9 +810,12 @@ class ExamPage(QWidget):
                     "Video ID",
                     "Correct Answer",
                     "Subject Answer",
+                    "Confidence Level",
                 ]
             )
-            for question, answer in zip(self.questions, self.answers):
+            for question, answer, confidence in zip(
+                self.questions, self.answers, self.confidence_levels
+            ):
                 writer.writerow(
                     [
                         self.subject_id,
@@ -706,6 +824,7 @@ class ExamPage(QWidget):
                         question.video_id,
                         question.correct_answer,
                         answer or "",
+                        confidence or "",
                     ]
                 )
         return result_path
@@ -733,6 +852,7 @@ class ExamPage(QWidget):
                 for question in self.questions
             ],
             "answers": self.answers,
+            "confidence_levels": self.confidence_levels,
         }
         with self.session_path.open("w", encoding="utf-8") as file:
             json.dump(data, file, indent=2)
@@ -784,7 +904,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Otoscope Exam")
-        self.resize(1040, 820)
+        self.resize(1040, 760)
 
         self.stack = QStackedWidget()
         self.start_page = StartPage(self.start_exam)
