@@ -1,5 +1,6 @@
 import csv
 import json
+import os
 import random
 import re
 import shutil
@@ -8,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-import cv2
+import imageio.v2 as imageio
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -67,6 +68,19 @@ def app_root() -> Path:
             return executable_path.parents[3]
         return executable_path.parent
     return Path(__file__).resolve().parent
+
+
+def configure_bundled_ffmpeg(root: Path) -> None:
+    if os.environ.get("IMAGEIO_FFMPEG_EXE"):
+        return
+    candidates = [
+        root / "ffmpeg" / "ffmpeg",
+        root / "ffmpeg" / "ffmpeg.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            os.environ["IMAGEIO_FFMPEG_EXE"] = str(candidate)
+            return
 
 
 def safe_filename(value: str) -> str:
@@ -326,7 +340,7 @@ class VideoPlayer(QWidget):
     def __init__(self):
         super().__init__()
         self.video_path: Path | None = None
-        self.capture = None
+        self.reader = None
         self.fps = 30.0
         self.playback_rate = 1.0
         self.playing = False
@@ -347,22 +361,24 @@ class VideoPlayer(QWidget):
 
     def load(self, video_path: Path):
         self.stop()
-        self.close_capture()
+        self.close_reader()
         self.video_path = video_path
-        self.capture = cv2.VideoCapture(str(video_path))
-        if not self.capture.isOpened():
-            self.capture = None
+        try:
+            self.reader = imageio.get_reader(str(video_path), format="ffmpeg")
+            metadata = self.reader.get_meta_data()
+        except Exception:
+            self.close_reader()
             self.video_label.setText("Video could not be opened.")
             self.errorOccurred.emit(f"Could not open video: {video_path.name}")
             return
 
-        fps = self.capture.get(cv2.CAP_PROP_FPS)
+        fps = metadata.get("fps")
         self.fps = fps if fps and fps > 1 else 30.0
         self.frame_loaded = False
         self.read_next_frame(startup=True)
 
     def play(self):
-        if self.capture is None:
+        if self.reader is None:
             if self.video_path is not None:
                 self.load(self.video_path)
             else:
@@ -397,34 +413,37 @@ class VideoPlayer(QWidget):
         return max(1, int(1000 / (self.fps * self.playback_rate)))
 
     def read_next_frame(self, startup: bool = False) -> bool:
-        if self.capture is None:
+        if self.reader is None:
             return False
 
-        frame = None
-        for _ in range(MAX_FRAME_READ_ATTEMPTS):
-            ok, frame = self.capture.read()
-            if ok and frame is not None:
-                break
-        else:
+        try:
+            frame = self.reader.get_next_data()
+        except IndexError:
             if self.frame_loaded:
                 self.pause()
                 return False
             self.pause()
             name = self.video_path.name if self.video_path else "current video"
-            self.errorOccurred.emit(
-                f"Could not read frames from video after "
-                f"{MAX_FRAME_READ_ATTEMPTS} attempts: {name}"
-            )
+            self.errorOccurred.emit(f"Could not read frames from video: {name}")
+            return False
+        except Exception:
+            self.pause()
+            name = self.video_path.name if self.video_path else "current video"
+            self.errorOccurred.emit(f"Video playback failed: {name}")
             return False
 
         self.frame_loaded = True
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        height, width, channels = frame.shape
+        if frame.ndim != 3 or frame.shape[2] < 3:
+            self.pause()
+            self.errorOccurred.emit("Video playback returned an unsupported frame format.")
+            return False
+        frame_rgb = frame[:, :, :3].copy()
+        height, width, _ = frame_rgb.shape
         image = QImage(
-            frame.data,
+            frame_rgb.data,
             width,
             height,
-            channels * width,
+            frame_rgb.strides[0],
             QImage.Format.Format_RGB888,
         ).copy()
         pixmap = QPixmap.fromImage(image)
@@ -450,10 +469,18 @@ class VideoPlayer(QWidget):
                 )
             )
 
-    def close_capture(self):
-        if self.capture is not None:
-            self.capture.release()
-            self.capture = None
+    def close_reader(self):
+        if self.reader is not None:
+            try:
+                self.reader.close()
+            except Exception:
+                pass
+            self.reader = None
+
+    def closeEvent(self, event):
+        self.stop()
+        self.close_reader()
+        super().closeEvent(event)
 
 
 class ExamPage(QWidget):
@@ -1024,6 +1051,7 @@ def apply_styles(app: QApplication):
 
 
 def main():
+    configure_bundled_ffmpeg(app_root())
     app = QApplication(sys.argv)
     apply_styles(app)
     window = MainWindow()

@@ -6,5 +6,6 @@ dependencies:
   - pip
   - pyinstaller
   - pyside6=6.7.3
-  - opencv
-
+  - imageio
+  - imageio-ffmpeg
+  - ffmpeg
