@@ -1,5 +1,6 @@
 import csv
 import json
+import logging
 import os
 import random
 import re
@@ -7,6 +8,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import imageio.v2 as imageio
@@ -48,6 +50,7 @@ CATEGORIES = [
 VIDEO_EXTENSIONS = {".mov", ".avi", ".mp4", ".mkv", ".wmv", ".m4v"}
 MAX_FRAME_READ_ATTEMPTS = 30
 FIXED_QUESTIONS_MANIFEST = "fixed_questions_100.json"
+LOGGER_NAME = "otoscope_exam"
 
 # Keep this as the internal question-count interface. None means use every video.
 QUESTION_LIMIT = 100
@@ -64,10 +67,47 @@ class VideoQuestion:
 def app_root() -> Path:
     if getattr(sys, "frozen", False):
         executable_path = Path(sys.executable).resolve()
-        if sys.platform == "darwin" and ".app" in executable_path.parts:
+        if (
+            sys.platform == "darwin"
+            and executable_path.parent.name == "MacOS"
+            and executable_path.parent.parent.name == "Contents"
+        ):
             return executable_path.parents[3]
         return executable_path.parent
     return Path(__file__).resolve().parent
+
+
+def setup_diagnostics(root: Path) -> logging.Logger:
+    result_path = root / "result"
+    result_path.mkdir(parents=True, exist_ok=True)
+
+    logger = logging.getLogger(LOGGER_NAME)
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        handler = RotatingFileHandler(
+            result_path / "application.log",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s | %(levelname)s | %(threadName)s | %(message)s")
+        )
+        logger.addHandler(handler)
+
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        logger.critical(
+            "Uncaught exception",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )
+
+    sys.excepthook = handle_exception
+    logger.info("Application diagnostics initialized")
+    return logger
+
+
+def get_logger() -> logging.Logger:
+    return logging.getLogger(LOGGER_NAME)
 
 
 def configure_bundled_ffmpeg(root: Path) -> None:
@@ -80,7 +120,9 @@ def configure_bundled_ffmpeg(root: Path) -> None:
     for candidate in candidates:
         if candidate.exists():
             os.environ["IMAGEIO_FFMPEG_EXE"] = str(candidate)
+            get_logger().info("Using bundled ffmpeg: %s", candidate)
             return
+    get_logger().warning("Bundled ffmpeg was not found under %s", root)
 
 
 def safe_filename(value: str) -> str:
@@ -366,15 +408,17 @@ class VideoPlayer(QWidget):
         try:
             self.reader = imageio.get_reader(str(video_path), format="ffmpeg")
             metadata = self.reader.get_meta_data()
-        except Exception:
+        except Exception as exc:
             self.close_reader()
             self.video_label.setText("Video could not be opened.")
             self.errorOccurred.emit(f"Could not open video: {video_path.name}")
+            get_logger().exception("Video player could not open %s: %s", video_path, exc)
             return
 
         fps = metadata.get("fps")
         self.fps = fps if fps and fps > 1 else 30.0
         self.frame_loaded = False
+        get_logger().info("Video player opened with imageio video=%s fps=%s", video_path, self.fps)
         self.read_next_frame(startup=True)
 
     def play(self):
@@ -426,10 +470,11 @@ class VideoPlayer(QWidget):
             name = self.video_path.name if self.video_path else "current video"
             self.errorOccurred.emit(f"Could not read frames from video: {name}")
             return False
-        except Exception:
+        except Exception as exc:
             self.pause()
             name = self.video_path.name if self.video_path else "current video"
             self.errorOccurred.emit(f"Video playback failed: {name}")
+            get_logger().exception("Video player read failed for %s: %s", self.video_path, exc)
             return False
 
         self.frame_loaded = True
@@ -1051,7 +1096,9 @@ def apply_styles(app: QApplication):
 
 
 def main():
-    configure_bundled_ffmpeg(app_root())
+    root = app_root()
+    setup_diagnostics(root)
+    configure_bundled_ffmpeg(root)
     app = QApplication(sys.argv)
     apply_styles(app)
     window = MainWindow()
