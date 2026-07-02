@@ -33,6 +33,10 @@ def conda_dependency(line: str) -> Path | None:
     if not line or line.endswith(":"):
         return None
     dep = line.split(" ", 1)[0]
+    if dep.startswith("@rpath/"):
+        path = conda_prefix / "lib" / dep.removeprefix("@rpath/")
+        if path.suffix == ".dylib":
+            return path
     if not dep.startswith(str(conda_prefix)):
         return None
     path = Path(dep)
