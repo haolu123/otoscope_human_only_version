@@ -65,6 +65,35 @@ print(f"Copied {len(seen)} ffmpeg dylib dependencies to {release_lib}")
 PY
 }
 
+verify_source_ffmpeg() {
+  local ffmpeg_exe="$1"
+  echo "imageio_ffmpeg executable: $ffmpeg_exe"
+  echo "Source ffmpeg linked libraries:"
+  otool -L "$ffmpeg_exe"
+  if otool -L "$ffmpeg_exe" | grep -qi "SDL3"; then
+    echo "Refusing to bundle ffmpeg because it depends on SDL3." >&2
+    exit 1
+  fi
+}
+
+verify_bundled_ffmpeg() {
+  local release_root="$1"
+  local bundled_ffmpeg="$release_root/ffmpeg/ffmpeg"
+  echo "Bundled ffmpeg version check:"
+  "$bundled_ffmpeg" -hide_banner -version
+
+  local sample_video
+  sample_video="$(
+    find "$release_root/videos" -type f \( -iname "*.mov" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null | head -n 1 || true
+  )"
+  if [ -n "$sample_video" ]; then
+    echo "Bundled ffmpeg video smoke test: $sample_video"
+    "$bundled_ffmpeg" -hide_banner -i "$sample_video" -f null -
+  else
+    echo "No bundled sample video found; skipping ffmpeg video smoke test."
+  fi
+}
+
 rm -rf build dist "${DIST_ROOT}" "${APP_NAME}.spec"
 
 python -m PyInstaller \
@@ -96,6 +125,7 @@ if [ -z "$FFMPEG_EXE" ] || [ ! -f "$FFMPEG_EXE" ]; then
   echo "Could not locate ffmpeg executable for bundling" >&2
   exit 1
 fi
+verify_source_ffmpeg "$FFMPEG_EXE"
 copy_ffmpeg_runtime "$FFMPEG_EXE" "$RELEASE_ROOT"
 cp "INSTRUCTIONS.txt" "${RELEASE_ROOT}/"
 cp "READ_ME_FIRST_MAC.txt" "${RELEASE_ROOT}/"
@@ -122,6 +152,7 @@ fi
 chmod +x "${RELEASE_ROOT}/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" || true
 chmod +x "${RELEASE_ROOT}/ffmpeg/ffmpeg" || true
 chmod +x "${RELEASE_ROOT}"/lib/*.dylib 2>/dev/null || true
+verify_bundled_ffmpeg "$RELEASE_ROOT"
 
 ditto -c -k --keepParent "${RELEASE_ROOT}" "${DIST_ROOT}/otoscope_exam_mac.zip"
 echo "Build complete: ${DIST_ROOT}/otoscope_exam_mac.zip"

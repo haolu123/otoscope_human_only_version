@@ -32,6 +32,12 @@ jobs:
         shell: bash -l {0}
         run: |
           conda activate otoscope_exam_mac
+          python -m pip install --upgrade --force-reinstall imageio-ffmpeg
+          python - <<'PY'
+          import imageio_ffmpeg
+          exe = imageio_ffmpeg.get_ffmpeg_exe()
+          print(f"imageio_ffmpeg executable: {exe}")
+          PY
           chmod +x otoscope_exam/build_macos.sh
           ./otoscope_exam/build_macos.sh
 
